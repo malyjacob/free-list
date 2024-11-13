@@ -1,0 +1,12 @@
+{
+	"authors": [
+		"maly jacob"
+	],
+	"copyright": "Copyright © 2024, maly jacob",
+	"description": "A minimal D application.",
+	"license": "MIT",
+	"name": "free-list",
+	"targetName": "free-list",
+	"targetType": "library",
+	"targetPath": "."
+}
