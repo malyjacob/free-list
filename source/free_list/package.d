@@ -6,11 +6,9 @@ import std.math.traits : isPowerOf2;
 
 @safe @nogc nothrow pure
 size_t roundUpToAlignment(size_t n, uint alignment) {
-
 	assert(alignment.isPowerOf2);
 	immutable uint slack = cast(uint) n & (alignment - 1);
-	const result = slack
-		? n + alignment - slack : n;
+	const result = slack ? n + alignment - slack : n;
 	assert(result >= n);
 	return result;
 }
@@ -281,8 +279,8 @@ struct FreeList(ParentAllocator,
 		if (fillMode == "void" || fillMode == "zero") {
 		assert(a >= alignment && a.isPowerOf2);
 		enum bool is_fill_zero = fillMode == "zero";
-		static if (adaptive == Yes.adaptive) // used of undateStats
-			bool not_fit;
+		static if (adaptive == Yes.adaptive) // used fot updateStats
+			bool too_large;
 		Node* cur = freeRoot, prev = null;
 		auto required_allocates = goodAllocSize(bytes);
 		// search the suitable block in free-list.
@@ -295,11 +293,11 @@ struct FreeList(ParentAllocator,
 				cur = cur.next;
 				continue;
 			}
-			// mark not_fit true if the block is too large and stop searching.
+			// mark too_large true if the block's volum is more than double of required alllocated size.
 			// this may triggle the trimming of free-list.
 			static if (adaptive == Yes.adaptive) {
-				if (cur.volum > (1024 - Node.sizeof) && cur.volum >= 2 * required_allocates) {
-					not_fit = true;
+				if (cur.volum >= 2 * required_allocates) {
+					too_large = true;
 					break;
 				}
 			}
@@ -332,7 +330,7 @@ struct FreeList(ParentAllocator,
 		node.next = allocatedRoot;
 		allocatedRoot = node;
 		static if (adaptive == Yes.adaptive) {
-			if (not_fit || (max != unbounded && !cur))
+			if (too_large || (max != unbounded && !cur))
 				updateStats(cur, prev);
 			updateStats(required_allocates, a);
 		}
@@ -395,6 +393,7 @@ struct FreeList(ParentAllocator,
 	static if (hasMember!(ParentAllocator, "alignedAllocate"))
 		nothrow bool alignedReallocate(ref void[] b, size_t s, uint a) {
 			assert(a >= alignment && isPowerOf2(a));
+			// if the a is same as allocator's alignment, then redirect to `reallocate`.
 			if (a == alignment)
 				return reallocate(b, s);
 			if (!b.ptr) {
@@ -406,6 +405,7 @@ struct FreeList(ParentAllocator,
 				b = null;
 				return true;
 			}
+			// if `b` is not aligned to `a`, then jump to `LAlignedMoveOrAllocate`.
 			if (cast(size_t) b.ptr % a != 0)
 				goto LAlignedMoveOrAllocate;
 			else {
@@ -465,6 +465,9 @@ struct FreeList(ParentAllocator,
 	@nogc nothrow bool deallocate(void[] b) {
 		if (!b)
 			return true;
+		// search the relevant node on allocated-list to deallocate that is put
+		// the block from allocated-list to free-list.
+		// in fact, if the allocator is not unbouned, this searching operation is faster.
 		Node* cur = allocatedRoot, prev;
 		while (cur) {
 			auto pos = cast(size_t) b.ptr;
@@ -475,6 +478,9 @@ struct FreeList(ParentAllocator,
 			prev = cur;
 			cur = cur.next;
 		}
+		// if search succeed, then insert the node into free-list according its volum,
+		// which would make the free-list sorted and would help allocator allocate blocks
+		// in suitable size when the allocating request happens.
 		if (cur) {
 			prev ? (prev.next = cur.next) : (allocatedRoot = cur.next);
 			auto target = cur;
@@ -488,6 +494,7 @@ struct FreeList(ParentAllocator,
 			}
 			target.next = cur;
 			prev ? (prev.next = target) : (freeRoot = target);
+			// record the times of deallocating until the next future allocating request happen.
 			static if (adaptive == Yes.adaptive)
 				++recentDeallocateNum;
 			return true;
@@ -514,12 +521,14 @@ struct FreeList(ParentAllocator,
 			target.next = cur;
 			prev ? (prev.next) = target : (freeRoot = target);
 		}
+		// record the times of deallocating until the next future allocating request happen.
 		static if (adaptive == Yes.adaptive)
 			recentDeallocateNum += num;
 		return true;
 	}
 
-	// descard all blocks traced by allocated-list
+	// descard all blocks traced by allocated-list,
+	// that is return the blocks managered by allocated-list to parent allocator.
 	static if (hasMember!(ParentAllocator, "deallocate"))
 		nothrow void release() {
 			while (allocatedRoot) {
@@ -529,7 +538,8 @@ struct FreeList(ParentAllocator,
 			}
 		}
 
-	// discard all blocks traced by free-list
+	// discard all blocks traced by free-list,
+	// that is return the blocks managered by free-list to parent allocator.
 	static if (hasMember!(ParentAllocator, "deallocate"))
 		nothrow void minimize() {
 			while (freeRoot) {
@@ -539,6 +549,7 @@ struct FreeList(ParentAllocator,
 			}
 		}
 
+	// shrink the free-list manually.
 	static if (hasMember!(ParentAllocator, "deallocate"))
 		nothrow void shrink(size_t expectedNum) {
 			assert(expectedNum != 0);
