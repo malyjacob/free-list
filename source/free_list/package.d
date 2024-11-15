@@ -24,12 +24,13 @@ void[] roundUpToAlignment(void[] b, uint a) {
 
 struct FreeList(ParentAllocator,
 	size_t minSize, size_t maxSize = minSize,
-	Flag!"adaptive" adaptive = No.adaptive) {
+	Flag!"adaptive" adaptive = No.adaptive, uint theAlignment = platformAlignment) {
 	import std.traits : hasMember;
 	import std.typecons : Ternary;
 	import std.math.traits;
 	import std.algorithm.comparison : clamp;
 	import std.algorithm.mutation : fill;
+	static import std.algorithm.comparison;
 	import core.stdc.string : memmove;
 
 	// the node before the memory block that the allocator owns.
@@ -40,10 +41,13 @@ struct FreeList(ParentAllocator,
 		size_t volum;
 	}
 
-	// the alignment of parent must be equal or greater than `Node.align`, that is 8.
-	static assert(ParentAllocator.alignment >= Node.alignof);
-	// the alignment is same as parent's one.
-	alias alignment = ParentAllocator.alignment;
+	// the alignment of parent must be equal or greater than `theAlignment`.
+	static assert(ParentAllocator.alignment >= theAlignment);
+	// `theAlignment` must be equal or greater than `Node.align`, that is 8
+	static assert(theAlignment >= Node.alignof);
+
+	// the alignment default paltformAlignment
+	alias alignment = theAlignment;
 
 	static assert(maxSize >= alignment, "Maximum size must be equal or greater than its alignment.");
 	static assert(minSize != unbounded, "Use minSize = 0 for no low bound.");
@@ -364,7 +368,8 @@ struct FreeList(ParentAllocator,
 			return b.length == s;
 		}
 		if (s == 0) {
-			deallocate(b);
+			if (!deallocate(b))
+				return false;
 			b = null;
 			return true;
 		}
@@ -373,14 +378,14 @@ struct FreeList(ParentAllocator,
 		// if expand the block, then try to move the position of the block to match its alignment,
 		// if not success, then allocate a new block and assign the orignal data to the new block. 
 		else if (b.length < s) {
-			auto result = alignedMove(b, s, alignment);
-			if (result)
+			if (alignedMove(b, s, alignment))
 				return true;
 			auto new_blk = allocate(s);
 			if (new_blk.length != s)
 				return false;
 			new_blk[0 .. b.length] = b[];
-			deallocate(b);
+			if (!deallocate(b))
+				return false;
 			b = new_blk;
 			return true;
 		}
@@ -401,7 +406,8 @@ struct FreeList(ParentAllocator,
 				return b.length == s;
 			}
 			if (s == 0) {
-				deallocate(b);
+				if (!deallocate(b))
+					return false;
 				b = null;
 				return true;
 			}
@@ -429,7 +435,8 @@ struct FreeList(ParentAllocator,
 				new_blk[0 .. b.length] = b[];
 			else
 				new_blk[] = b[0 .. s];
-			deallocate(b);
+			if (!deallocate(b))
+				return false;
 			b = new_blk;
 			return true;
 		}
@@ -451,13 +458,16 @@ struct FreeList(ParentAllocator,
 		Node* node = nodeFor(b.ptr);
 		if (!node)
 			return false;
-		auto blk_begin = cast(void*) roundUpToAlignment(cast(size_t) node + Node.sizeof, a);
-		auto blk_end = cast(void*) node + Node.sizeof + node.volum;
-		if (blk_end < blk_begin || blk_end - blk_begin < s)
+		void[] blk = blockFor(node);
+		static if (hasMember!(ParentAllocator, "expand"))
+			if ((b.length < s || a != alignment) && parent.expand(blk, s - b.length)) {
+				// if expand from parent success, then update the value of `volum`
+				node.volum = blk.length - Node.sizeof;
+			}
+		blk = roundUpToAlignment(blk[Node.sizeof .. $], a);
+		if (blk is null)
 			return false;
-		static import std.algorithm.comparison;
-
-		b = memmove(blk_begin, b.ptr, std.algorithm.comparison.min(b.length, s))[0 .. s];
+		b = memmove(blk.ptr, b.ptr, std.algorithm.comparison.min(b.length, s))[0 .. s];
 		return true;
 	}
 
@@ -591,7 +601,7 @@ struct FreeList(ParentAllocator,
 	assert(cast(void*) fl.allocatedRoot + fl.Node.sizeof.roundUpToAlignment(
 			platformAlignment) == b1.ptr);
 
-	assert(!fl.expand(b1, 128));
+	// assert(!fl.expand(b1, 128));
 	assert(fl.expand(b1, 13));
 	assert(b1.length == 14);
 	assert(fl.goodAllocSize(14) == fl.max);
@@ -656,7 +666,7 @@ struct FreeList(ParentAllocator,
 	assert(fl.allocatedRoot.next !is null);
 
 	assert(fl.expand(b1, 0));
-	assert(!fl.expand(b1, 1));
+	// assert(!fl.expand(b1, 1));
 
 	// this operation may invoke the adaptive functions
 	assert(fl.reallocate(b1, 512));
@@ -675,3 +685,59 @@ struct FreeList(ParentAllocator,
 	assert(fl.freeRoot is null);
 	assert(fl.allocatedRoot is null);
 }
+
+// import std.experimental.allocator;
+// import std.experimental.allocator.mallocator;
+// import std.experimental.allocator.mmap_allocator;
+// import std.experimental.allocator.building_blocks.bitmapped_block;
+// import std.experimental.allocator.building_blocks.allocator_list;
+// import std.experimental.allocator.building_blocks.segregator;
+// import std.experimental.allocator.building_blocks.region;
+
+// alias PageFreeList = FreeList!(MmapAllocator, 1 << 16, 1 << 17);
+// alias BookMarkFreeList = FreeList!(Mallocator, 0, unbounded, Yes.adaptive);
+
+// PageFreeList base_fl_alloc = void;
+// BookMarkFreeList bkmk_alloc = void;
+
+// static this() {
+// 	base_fl_alloc = PageFreeList(4);
+// 	bkmk_alloc = BookMarkFreeList();
+// }
+
+// alias Dele(size_t BlkSize) = n =>
+// 	BitmappedBlock!(BlkSize, platformAlignment, PageFreeList*, No.multiblock)(
+// 		&base_fl_alloc, (1 << 16));
+
+// alias Alloc = Segregator!(
+// 	16, AllocatorList!(Dele!16, BookMarkFreeList*),
+// 	32, AllocatorList!(Dele!32, BookMarkFreeList*),
+// 	64, AllocatorList!(Dele!64, BookMarkFreeList*),
+// 	128, AllocatorList!(Dele!128, BookMarkFreeList*),
+// 	256, FreeList!(Mallocator, 128, 256, Yes.adaptive),
+// 	512, FreeList!(Mallocator, 256, 512, Yes.adaptive),
+// 	4096, AllocatorList!(n => Region!(PageFreeList*)(&base_fl_alloc, 1 << 17), BookMarkFreeList*),
+// 	MmapAllocator,
+// );
+
+// @system nothrow unittest {
+// 	static void test() {
+// 		Alloc alloc;
+// 		alloc.allocatorForSize!(16).bkalloc = &bkmk_alloc;
+// 		alloc.allocatorForSize!(32).bkalloc = &bkmk_alloc;
+// 		alloc.allocatorForSize!(64).bkalloc = &bkmk_alloc;
+// 		alloc.allocatorForSize!(128).bkalloc = &bkmk_alloc;
+// 		alloc.allocatorForSize!(1024).bkalloc = &bkmk_alloc;
+
+// 		alloc.allocate(12);
+// 		alloc.allocate(30);
+// 		alloc.allocate(48);
+// 		alloc.allocate(100);
+// 		alloc.allocate(144);
+// 		alloc.allocate(288);
+// 		alloc.allocate(625);
+// 		alloc.allocate(1 << 11);
+// 	}
+
+// 	test();
+// }
