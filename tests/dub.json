@@ -1,0 +1,19 @@
+{
+	"authors": [
+		"maly jacob"
+	],
+	"copyright": "Copyright © 2024, maly jacob",
+	"description": "A minimal D application.",
+	"license": "MIT",
+	"name": "tests",
+	"targetName": "app",
+	"targetPath": "../",
+	"targetType": "executable",
+	"dependencies": {
+		"free-list": {
+			"path": "../",
+			"version": "*"
+		},
+		"cmdline": "~>1.4.2"
+	}
+}

@@ -1,0 +1,8 @@
+{
+	"fileVersion": 1,
+	"versions": {
+		"cmdline": "1.4.2",
+		"free-list": {"path":"../"},
+		"mir-core": "1.7.1"
+	}
+}

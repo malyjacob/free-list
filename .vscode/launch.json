@@ -9,7 +9,12 @@
             "request": "launch",
             "name": "Debug D project",
             "cwd": "${workspaceFolder}",
-            "program": "./free-list-test-library"
+            "program": "./app",
+            "args": [
+                "-c5000",
+                "-j16",
+                "-m"
+            ]
         },
     ]
 }

@@ -6,8 +6,8 @@
 	"description": "A minimal D application.",
 	"license": "MIT",
 	"name": "free-list",
-	"version": "0.0.2",
 	"targetName": "free-list",
+	"targetPath": ".",
 	"targetType": "library",
-	"targetPath": "."
+	"version": "0.0.2"
 }
