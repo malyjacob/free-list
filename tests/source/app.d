@@ -18,7 +18,7 @@ alias SharedAlloc = SharedFreelist!(Mallocator, 128, 1024, 32);
 alias AllocLite = FreeListLite!(Mallocator, chooseAtRuntime, chooseAtRuntime, 32);
 alias SharedAllocLite = SharedFreeListLite!(Mallocator, 128, 1024, 32);
 
-alias NSharedAlocLite = NSharedFreelistLite!(Mallocator, 128, 1024, 64);
+alias NSharedAlocLite = NSharedFreelistLite!(Mallocator, 128, 1024, chooseAtRuntime);
 
 void test_alloc(Allocator)(Allocator* ptr_alloc, size_t circle)
 {
@@ -101,7 +101,9 @@ void test(Allocator)(Allocator* ptr_alloc, StopWatch* sw, size_t circle, size_t 
 		else if (is_new_lite)
 		{
 			NSharedAlocLite nsalloc = NSharedAlocLite(64);
+			nsalloc.initAllocatedSlots(16);
 			nsalloc.appendNum = 4;
+			nsalloc.cacheLimit = 64;
 			test(&nsalloc, &sw, circle_, thnum_);
 		}
 	}
