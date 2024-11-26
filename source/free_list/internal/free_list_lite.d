@@ -465,30 +465,30 @@ shared struct SharedFreeListLite(ParentAllocator, size_t minSize,
     static assert(maxSize >= minSize,
         "Maximum size must be equal or greater than its Minimum size.");
 
-    static if (stateSize!ParentAllocator)
-        ParentAllocator parent;
-    else
-        alias parent = ParentAllocator.instance;
-
     static if (minSize == chooseAtRuntime)
         private size_t _min = chooseAtRuntime;
     static if (maxSize == chooseAtRuntime)
         private size_t _max = chooseAtRuntime;
 
-    private Node* allocatedRoot;
-    private Node* allocatedTail;
-    private uint allocatedNum;
-    private SpinLock allocatedLock;
+    private align(64) uint _appendNum = 2;
 
-    private Node* freeRoot;
-    private uint freeNum;
-    private SpinLock freeLock;
+    private align(64) Node* allocatedRoot;
+    private align(64) Node* allocatedTail;
+    private align(64) uint allocatedNum;
+    private align(64) SpinLock allocatedLock;
 
-    private Node* cacheRoot;
-    private uint cacheNum;
-    private SpinLock cacheLock;
+    private align(64) Node* freeRoot;
+    private align(64) uint freeNum;
+    private align(64) SpinLock freeLock;
 
-    private uint _appendNum = 2;
+    private align(64) Node* cacheRoot;
+    private align(64) uint cacheNum;
+    private align(64) SpinLock cacheLock;
+
+    static if (stateSize!ParentAllocator)
+        align(64) ParentAllocator parent;
+    else
+        alias parent = ParentAllocator.instance;
 
     static if (minSize != chooseAtRuntime && maxSize != chooseAtRuntime)
         this(size_t num) nothrow

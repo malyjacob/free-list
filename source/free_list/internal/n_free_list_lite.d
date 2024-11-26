@@ -9,11 +9,10 @@ import std.math.traits : isPowerOf2;
 import std.traits : hasMember;
 import std.algorithm.mutation : fill, swap;
 import core.atomic : atomicOp, cas, atomicStore, atomicLoad;
-import core.internal.spinlock : SpinLock;
 import object : hashOf;
 import free_list.internal.util;
 
-shared struct NSharedFreelistLite(ParentAllocator, size_t minSize, size_t maxSize = minSize,
+shared struct NSharedFreeListLite(ParentAllocator, size_t minSize, size_t maxSize = minSize,
     size_t allocatedSlotNum = 8, uint theAlignment = platformAlignment)
 {
     private shared struct Node
@@ -31,46 +30,42 @@ shared struct NSharedFreelistLite(ParentAllocator, size_t minSize, size_t maxSiz
     static assert(maxSize >= minSize,
         "Maximum size must be equal or greater than its Minimum size.");
 
-    static if (stateSize!ParentAllocator)
-        ParentAllocator parent;
-    else
-        alias parent = ParentAllocator.instance;
+    private shared align(64) struct AllocatedSlot
+    {
+        Node* allocatedRoot;
+        Node* allocatedTail;
+        size_t allocatedNum;
+        SpinLock allocatedLock;
+    }
+
+    static assert(AllocatedSlot.sizeof == 64);
+
+    private uint _cacheLimit = 32;
+    private uint _appendNum = 2;
 
     static if (minSize == chooseAtRuntime)
         private size_t _min = chooseAtRuntime;
     static if (maxSize == chooseAtRuntime)
         private size_t _max = chooseAtRuntime;
-
-    private shared struct AllocatedSlot
-    {
-        Node* allocatedRoot;
-        Node* allocatedTail;
-        uint allocatedNum;
-    }
-
     static if (allocatedSlotNum == chooseAtRuntime)
-    {
         private AllocatedSlot[] _allocatedSlots;
-        private SpinLock[] _allocatedLocks;
-        private bool _isMallocator;
-    }
+
+    private align(64) uint cacheNum;
+
+    private align(64) uint freeNum;
+
+    private align(64) Node* freeRoot;
+    private align(64) Node* cacheRoot;
+
+    private align(64) SpinLock freeLock;
+    private align(64) SpinLock cacheLock;
+    static if (stateSize!ParentAllocator)
+        align(64) ParentAllocator parent;
     else
-    {
-        private AllocatedSlot[allocatedSlotNum] _allocatedSlots;
-        private SpinLock[allocatedSlotNum] _allocatedLocks;
-    }
+        alias parent = ParentAllocator.instance;
 
-    private Node* freeRoot;
-    private uint freeNum;
-    private SpinLock freeLock;
-
-    private Node* cacheRoot;
-    private uint cacheNum;
-    private SpinLock cacheLock;
-
-    private uint _cacheLimit = 32;
-
-    private uint _appendNum = 2;
+    static if (allocatedSlotNum != chooseAtRuntime)
+        private align(64) AllocatedSlot[allocatedSlotNum] _allocatedSlots;
 
     static if (minSize != chooseAtRuntime && maxSize != chooseAtRuntime)
         this(size_t num) nothrow
@@ -167,23 +162,14 @@ shared struct NSharedFreelistLite(ParentAllocator, size_t minSize, size_t maxSiz
 
     static if (allocatedSlotNum == chooseAtRuntime)
     {
-        nothrow void initAllocatedSlots(size_t slotNum)
+        @nogc nothrow void initAllocatedSlots(size_t slotNum)
         {
-            _allocatedSlots = cast(shared) parent.makeArray!AllocatedSlot(slotNum);
-            if (!_allocatedSlots)
-            {
-                _allocatedLocks = cast(shared) Mallocator.instance.makeArray!SpinLock(slotNum);
-                _allocatedSlots = cast(shared) Mallocator.instance.makeArray!AllocatedSlot(slotNum);
-                if (!_allocatedLocks || !_allocatedSlots)
-                    throw badAllocationError("no more memory from mallocator.");
-                _isMallocator = true;
-            }
-            else
-            {
-                _allocatedLocks = cast(shared) parent.makeArray!SpinLock(slotNum);
-                if (!_allocatedLocks)
-                    throw badAllocationError("no more memory from parent allocator.");
-            }
+            _allocatedSlots = cast(AllocatedSlot[]) AlignedMallocator.instance.alignedAllocate(slotNum * AllocatedSlot.sizeof, 64);
+            if (_allocatedSlots is null)
+                throw badAllocationError("no more memory from AlignedMallocator to be allocated");
+            import core.lifetime;
+            foreach (i; 0 .. _allocatedSlots.length)
+                emplace(&_allocatedSlots[i]);
         }
     }
 
@@ -223,15 +209,15 @@ shared struct NSharedFreelistLite(ParentAllocator, size_t minSize, size_t maxSiz
     pragma(inline, true) @nogc nothrow @safe private ref AllocatedSlot allocatedSlot()
     {
         static if (allocatedSlotNum == chooseAtRuntime)
-            assert(_allocatedLocks && _allocatedSlots);
+            assert(_allocatedSlots);
         return _allocatedSlots[getNodeIndex()];
     }
 
     pragma(inline, true) @nogc nothrow @safe private ref SpinLock allocatedLock()
     {
         static if (allocatedSlotNum == chooseAtRuntime)
-            assert(_allocatedLocks && _allocatedSlots);
-        return _allocatedLocks[getNodeIndex()];
+            assert(_allocatedSlots);
+        return _allocatedSlots[getNodeIndex()].allocatedLock;
     }
 
     pragma(inline, true) @nogc nothrow @trusted private Node* nodeFor(
@@ -593,18 +579,7 @@ shared struct NSharedFreelistLite(ParentAllocator, size_t minSize, size_t maxSiz
                 }
             }
             static if (allocatedSlotNum == chooseAtRuntime)
-            {
-                if (_isMallocator)
-                {
-                    Mallocator.instance.deallocate(cast(void[]) _allocatedLocks);
-                    Mallocator.instance.deallocate(cast(void[]) _allocatedSlots);
-                }
-                else
-                {
-                    parent.deallocate(cast(void[]) _allocatedLocks);
-                    parent.deallocate(cast(void[]) _allocatedSlots);
-                }
-            }
+                AlignedMallocator.instance.deallocate(cast(void[]) _allocatedSlots);
         }
     }
 }

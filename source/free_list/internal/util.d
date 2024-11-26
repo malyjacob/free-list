@@ -3,6 +3,7 @@ module free_list.internal.util;
 import object : Error;
 import core.lifetime : emplace;
 import std.math.traits : isPowerOf2;
+import core.atomic, core.thread;
 
 @safe @nogc nothrow pure size_t roundUpToAlignment(size_t n, uint alignment)
 {
@@ -72,3 +73,51 @@ version (Posix)
         return cast(size_t) pthread_self();
     }
 }
+
+package shared struct SpinLock
+{
+@nogc nothrow:
+    this(Contention contention) @trusted
+    {
+        this.contention = contention;
+    }
+
+    void yield(size_t k) @trusted
+    {
+        if (k < pauseThresh)
+            return core.atomic.pause();
+        else
+            return Thread.yield();
+    }
+
+    void lock() @trusted
+    {
+        if (cas(&val, size_t(0), size_t(1)))
+            return;
+        immutable step = 1 << contention;
+        while (true)
+        {
+            for (size_t n; atomicLoad!(MemoryOrder.raw)(val); n += step)
+                yield(n);
+            if (cas(&val, size_t(0), size_t(1)))
+                return;
+        }
+    }
+
+    void unlock() @trusted
+    {
+        atomicStore!(MemoryOrder.rel)(val, size_t(0));
+    }
+
+    size_t val;
+    Contention contention = Contention.Medium;
+}
+
+package enum Contention : size_t
+{
+    Brief,
+    Medium,
+    Lengthy
+}
+
+private enum pauseThresh = 16;

@@ -651,7 +651,7 @@ struct FreeList(ParentAllocator, size_t minSize, size_t maxSize = minSize,
     }
 }
 
-shared struct SharedFreelist(ParentAllocator, size_t minSize, size_t maxSize = minSize,
+shared struct SharedFreeList(ParentAllocator, size_t minSize, size_t maxSize = minSize,
     uint maxCacheSize = 16, uint theAlignment = platformAlignment)
 {
     private shared struct Node
@@ -670,30 +670,29 @@ shared struct SharedFreelist(ParentAllocator, size_t minSize, size_t maxSize = m
     static assert(maxSize >= alignment, "Maximum size must be equal or greater than its alignment.");
     static assert(minSize != unbounded, "Use minSize = 0 for no low bound.");
 
-    static if (stateSize!ParentAllocator)
-        ParentAllocator parent;
-    else
-        alias parent = ParentAllocator.instance;
-
     static if (minSize == chooseAtRuntime)
         private size_t _min = chooseAtRuntime;
     static if (maxSize == chooseAtRuntime)
         private size_t _max = chooseAtRuntime;
 
-    private Node* allocatedRoot;
-    private Node* freeRoot;
-    private Node* cacheRoot;
-
-    private SpinLock allocatedLock;
-    private SpinLock freeLock;
-    private SpinLock cacheLock;
-
-    private uint cacheNum;
-    private uint refineFactor;
-
     private uint _baseAffinity = 3;
-
     private uint _appendNum = 2;
+
+    private align(64) Node* allocatedRoot;
+    private align(64) Node* freeRoot;
+    private align(64) Node* cacheRoot;
+
+    private align(64) SpinLock allocatedLock;
+    private align(64) SpinLock freeLock;
+    private align(64) SpinLock cacheLock;
+
+    private align(64) uint cacheNum;
+    private align(64) uint refineFactor;
+
+    static if (stateSize!ParentAllocator)
+        align(64) ParentAllocator parent;
+    else
+        alias parent = ParentAllocator.instance;
 
     static if (minSize != chooseAtRuntime && maxSize != chooseAtRuntime)
         this(size_t num) nothrow

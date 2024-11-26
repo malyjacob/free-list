@@ -11,18 +11,18 @@ import std.datetime.stopwatch : StopWatch;
 import std.stdio;
 import cmdline;
 
-import free_list.internal.free_list : FreeList, SharedFreelist;
+import free_list.internal.free_list : FreeList, SharedFreeList;
 import free_list.internal.free_list_lite : FreeListLite, SharedFreeListLite;
-import free_list.internal.n_free_list_lite : NSharedFreelistLite;
+import free_list.internal.n_free_list_lite : NSharedFreeListLite;
 import free_list.internal.util : getThisThreadId;
 
 alias Alloc = FreeList!(Mallocator, chooseAtRuntime, chooseAtRuntime, 32);
-alias SharedAlloc = SharedFreelist!(Mallocator, 128, 1024, 32);
+alias SharedAlloc = SharedFreeList!(Mallocator, 128, 1024, 32);
 
 alias AllocLite = FreeListLite!(Mallocator, chooseAtRuntime, chooseAtRuntime, 32);
 alias SharedAllocLite = SharedFreeListLite!(Mallocator, 128, 1024, 32);
 
-alias NSharedAlocLite = NSharedFreelistLite!(Mallocator, 128, 1024, chooseAtRuntime);
+alias NSharedAlocLite = NSharedFreeListLite!(Mallocator, 128, 1024, chooseAtRuntime);
 
 void test_alloc(Allocator)(Allocator* ptr_alloc, size_t circle, size_t slot)
 {
@@ -30,7 +30,7 @@ void test_alloc(Allocator)(Allocator* ptr_alloc, size_t circle, size_t slot)
 	enum size_t top = 1025;
 	auto thread_num = getThisThreadId();
 	auto hash_idx = thread_num.hashOf(1_000_000_000_000_002_481) % slot;
-	writefln("this thread number is %s, the hash index is: %s", thread_num, hash_idx);
+	writefln("this thread number is %x, the hash index is: %s", thread_num, hash_idx);
 	auto ptr_arr = cast(void[][]) ptr_alloc.allocate(10 * (void[]).sizeof);
 	foreach (i; 0 .. circle * 100)
 	{
@@ -39,7 +39,6 @@ void test_alloc(Allocator)(Allocator* ptr_alloc, size_t circle, size_t slot)
 		auto tmp = ptr_alloc.allocate(size);
 		assert(tmp);
 		ptr_arr[idx] = tmp;
-		Thread.yield;
 		if (idx == 9)
 		{
 			foreach (ele; ptr_arr)
@@ -113,20 +112,23 @@ void test(Allocator)(Allocator* ptr_alloc, StopWatch* sw, size_t circle, size_t 
 			writefln("\tin new lite mode, slots: %s, cache-limit: %s", slots_, cache_);
 		if (is_no_lite)
 		{
-			SharedAlloc salloc = SharedAlloc(64);
+			align(64) SharedAlloc salloc = SharedAlloc(64);
+			pragma(msg, salloc.sizeof);
 			salloc.appendNum = append_;
 			salloc.baseAffinity = 4;
 			test(&salloc, &sw, circle_, thnum_);
 		}
 		else if (is_lite)
 		{
-			SharedAllocLite salloc = SharedAllocLite(64);
+			align(64) SharedAllocLite salloc = SharedAllocLite(64);
+			pragma(msg, salloc.sizeof);
 			salloc.appendNum = append_;
 			test(&salloc, &sw, circle_, thnum_);
 		}
 		else if (is_new_lite)
 		{
-			NSharedAlocLite nsalloc = NSharedAlocLite(64);
+			align(64) NSharedAlocLite nsalloc = NSharedAlocLite(64);
+			pragma(msg, nsalloc.sizeof);
 			nsalloc.initAllocatedSlots(slots_);
 			nsalloc.appendNum = append_;
 			nsalloc.cacheLimit = cache_;
